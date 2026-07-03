@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Promocion.dts/Promocion.dts.csproj" />
+  <Project Path="Promocion/Promocion.csproj" />
+</Solution>
