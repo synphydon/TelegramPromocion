@@ -54,7 +54,15 @@ public sealed class ServicioProgramaciones : BackgroundService
                 bool enviado = await publicador.PublicarAsync(programacion.PublicacionId, cancelacion);
                 programacion.UltimaEjecucion = ahora;
 
-                if (enviado && programacion.Tipo == Estados.Recurrente)
+                if (enviado)
+                {
+                    programacion.PublicacionesRealizadas++;
+                }
+
+                bool cantidadAlcanzada = programacion.CantidadPublicaciones.HasValue
+                    && programacion.PublicacionesRealizadas >= programacion.CantidadPublicaciones.Value;
+
+                if (enviado && programacion.Tipo == Estados.Recurrente && !cantidadAlcanzada)
                 {
                     programacion.Estado = Estados.Activa;
                     programacion.FechaProximaEjecucion = ahora.AddMinutes(programacion.IntervaloMinutos!.Value);

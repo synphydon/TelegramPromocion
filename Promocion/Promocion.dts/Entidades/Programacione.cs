@@ -15,6 +15,10 @@ public partial class Programacione
 
     public int? IntervaloMinutos { get; set; }
 
+    public int? CantidadPublicaciones { get; set; }
+
+    public int PublicacionesRealizadas { get; set; }
+
     public string Estado { get; set; } = null!;
 
     public DateTime? UltimaEjecucion { get; set; }

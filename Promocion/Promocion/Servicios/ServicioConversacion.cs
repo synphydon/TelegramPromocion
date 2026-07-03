@@ -63,6 +63,14 @@ public sealed class ServicioConversacion
             return;
         }
 
+        if (EsComandoCancelarProgramados(mensaje.Text))
+        {
+            await using ContextoTelegram contextoProgramados = await fabricaContexto.CreateDbContextAsync(cancelacion);
+            SesionesConversacion sesionProgramados = await ObtenerSesionAsync(contextoProgramados, mensaje.From, cancelacion);
+            await CancelarProgramadosAsync(contextoProgramados, sesionProgramados.UsuarioId, mensaje.Chat.Id, cancelacion);
+            return;
+        }
+
         if (EsComandoCancelar(mensaje.Text))
         {
             await using ContextoTelegram contextoCancelacion = await fabricaContexto.CreateDbContextAsync(cancelacion);
@@ -95,6 +103,9 @@ public sealed class ServicioConversacion
                 break;
             case Estados.EsperandoIntervalo:
                 await RecibirIntervaloAsync(contexto, sesion, mensaje, cancelacion);
+                break;
+            case Estados.EsperandoCantidad:
+                await RecibirCantidadAsync(contexto, sesion, mensaje, cancelacion);
                 break;
             default:
                 await MostrarInicioAsync(mensaje.Chat.Id, cancelacion);
@@ -234,6 +245,30 @@ public sealed class ServicioConversacion
             cancellationToken: cancelacion);
     }
 
+    private async Task CancelarProgramadosAsync(
+        ContextoTelegram contexto,
+        long usuarioId,
+        long chatId,
+        CancellationToken cancelacion)
+    {
+        List<Programacione> programaciones = await contexto.Programaciones
+            .Where(elemento => elemento.Publicacion.UsuarioId == usuarioId
+                && elemento.Tipo == Estados.Recurrente
+                && (elemento.Estado == Estados.Pendiente || elemento.Estado == Estados.Activa))
+            .ToListAsync(cancelacion);
+
+        foreach (Programacione programacion in programaciones)
+        {
+            programacion.Estado = Estados.Cancelada;
+        }
+
+        await contexto.SaveChangesAsync(cancelacion);
+        string respuesta = programaciones.Count == 0
+            ? "No tiene posteos recurrentes pendientes para cancelar."
+            : $"Se cancelaron {programaciones.Count} {(programaciones.Count == 1 ? "posteo recurrente" : "posteos recurrentes")}. Los posteos con fecha y hora conservaron su programación.";
+        await clienteBot.SendMessage(chatId, respuesta, cancellationToken: cancelacion);
+    }
+
     private async Task ComenzarAsync(
         ContextoTelegram contexto,
         SesionesConversacion sesion,
@@ -264,6 +299,18 @@ public sealed class ServicioConversacion
         string comando = texto.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
         return comando.Equals("/cancelar", StringComparison.OrdinalIgnoreCase)
             || comando.StartsWith("/cancelar@", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool EsComandoCancelarProgramados(string? texto)
+    {
+        if (string.IsNullOrWhiteSpace(texto))
+        {
+            return false;
+        }
+
+        string comando = texto.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+        return comando.Equals("/cancelarprogramados", StringComparison.OrdinalIgnoreCase)
+            || comando.StartsWith("/cancelarprogramados@", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool EsComandoComenzar(string? texto)
@@ -479,7 +526,7 @@ public sealed class ServicioConversacion
             return;
         }
 
-        await CrearProgramacionAsync(contexto, sesion, Estados.FechaHora, fechaHora, null, cancelacion);
+        await CrearProgramacionAsync(contexto, sesion, Estados.FechaHora, fechaHora, null, null, cancelacion);
         await clienteBot.SendMessage(mensaje.Chat.Id, $"✅ Posteo programado para el {fechaHora:dd/MM/yyyy} a las {fechaHora:HH:mm}.", cancellationToken: cancelacion);
     }
 
@@ -491,9 +538,38 @@ public sealed class ServicioConversacion
             return;
         }
 
+        sesion.DatosTemporales = minutos.ToString(CultureInfo.InvariantCulture);
+        sesion.Estado = Estados.EsperandoCantidad;
+        sesion.FechaActualizacion = ServicioFecha.ObtenerAhoraLocal(opciones.ZonaHoraria);
+        await contexto.SaveChangesAsync(cancelacion);
+        await clienteBot.SendMessage(
+            mensaje.Chat.Id,
+            "Indique cuántas veces desea que se publique el posteo.",
+            cancellationToken: cancelacion);
+    }
+
+    private async Task RecibirCantidadAsync(
+        ContextoTelegram contexto,
+        SesionesConversacion sesion,
+        Message mensaje,
+        CancellationToken cancelacion)
+    {
+        bool intervaloValido = int.TryParse(sesion.DatosTemporales, NumberStyles.Integer, CultureInfo.InvariantCulture, out int minutos);
+        if (!intervaloValido || !int.TryParse(mensaje.Text, out int cantidad) || cantidad <= 0)
+        {
+            await clienteBot.SendMessage(
+                mensaje.Chat.Id,
+                "Ingrese una cantidad de publicaciones mayor que cero.",
+                cancellationToken: cancelacion);
+            return;
+        }
+
         DateTime primeraEjecucion = ServicioFecha.ObtenerAhoraLocal(opciones.ZonaHoraria).AddMinutes(minutos);
-        await CrearProgramacionAsync(contexto, sesion, Estados.Recurrente, primeraEjecucion, minutos, cancelacion);
-        await clienteBot.SendMessage(mensaje.Chat.Id, $"✅ El posteo se realizará cada {minutos} minutos.", cancellationToken: cancelacion);
+        await CrearProgramacionAsync(contexto, sesion, Estados.Recurrente, primeraEjecucion, minutos, cantidad, cancelacion);
+        await clienteBot.SendMessage(
+            mensaje.Chat.Id,
+            $"✅ El posteo se publicará {cantidad} {(cantidad == 1 ? "vez" : "veces")}, cada {minutos} minutos.",
+            cancellationToken: cancelacion);
     }
 
     private async Task CrearProgramacionAsync(
@@ -502,6 +578,7 @@ public sealed class ServicioConversacion
         string tipo,
         DateTime proximaEjecucion,
         int? intervalo,
+        int? cantidadPublicaciones,
         CancellationToken cancelacion)
     {
         contexto.Programaciones.Add(new Programacione
@@ -510,6 +587,8 @@ public sealed class ServicioConversacion
             Tipo = tipo,
             FechaProximaEjecucion = proximaEjecucion,
             IntervaloMinutos = intervalo,
+            CantidadPublicaciones = cantidadPublicaciones,
+            PublicacionesRealizadas = 0,
             Estado = Estados.Pendiente,
             FechaCreacion = ServicioFecha.ObtenerAhoraLocal(opciones.ZonaHoraria)
         });

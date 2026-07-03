@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS Programaciones (
     Tipo VARCHAR(30) NOT NULL,
     FechaProximaEjecucion DATETIME(6) NOT NULL,
     IntervaloMinutos INT NULL,
+    CantidadPublicaciones INT NULL,
+    PublicacionesRealizadas INT NOT NULL DEFAULT 0,
     Estado VARCHAR(30) NOT NULL DEFAULT 'Pendiente',
     UltimaEjecucion DATETIME(6) NULL,
     FechaCreacion DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -58,6 +60,27 @@ CREATE TABLE IF NOT EXISTS Programaciones (
     CONSTRAINT FK_Programaciones_Publicaciones FOREIGN KEY (PublicacionId)
         REFERENCES Publicaciones (Id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- Mantiene instalaciones existentes alineadas con el esquema actual.
+SET @sqlCantidad = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = 'telegram_bot' AND TABLE_NAME = 'Programaciones'
+       AND COLUMN_NAME = 'CantidadPublicaciones') = 0,
+    'ALTER TABLE Programaciones ADD COLUMN CantidadPublicaciones INT NULL AFTER IntervaloMinutos',
+    'SELECT 1');
+PREPARE sentenciaCantidad FROM @sqlCantidad;
+EXECUTE sentenciaCantidad;
+DEALLOCATE PREPARE sentenciaCantidad;
+
+SET @sqlRealizadas = IF(
+    (SELECT COUNT(*) FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = 'telegram_bot' AND TABLE_NAME = 'Programaciones'
+       AND COLUMN_NAME = 'PublicacionesRealizadas') = 0,
+    'ALTER TABLE Programaciones ADD COLUMN PublicacionesRealizadas INT NOT NULL DEFAULT 0 AFTER CantidadPublicaciones',
+    'SELECT 1');
+PREPARE sentenciaRealizadas FROM @sqlRealizadas;
+EXECUTE sentenciaRealizadas;
+DEALLOCATE PREPARE sentenciaRealizadas;
 
 CREATE TABLE IF NOT EXISTS EnviosPublicacion (
     Id BIGINT NOT NULL AUTO_INCREMENT,

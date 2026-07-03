@@ -7,6 +7,7 @@ public static class Estados
     public const string EsperandoFecha = "EsperandoFecha";
     public const string EsperandoHora = "EsperandoHora";
     public const string EsperandoIntervalo = "EsperandoIntervalo";
+    public const string EsperandoCantidad = "EsperandoCantidad";
     public const string Borrador = "Borrador";
     public const string Programada = "Programada";
     public const string Cancelada = "Cancelada";
