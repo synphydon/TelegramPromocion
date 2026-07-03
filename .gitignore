@@ -1,1 +1,41 @@
-Promocion/.vs/
+# Compilacion y restauracion de .NET
+**/bin/
+**/obj/
+artifacts/
+
+# Configuracion local y secretos
+**/appsettings.json
+**/appsettings.*.json
+!**/appsettings.Ejemplo.json
+!**/appsettings.Example.json
+
+# Archivos generados por Visual Studio, VS Code y JetBrains
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Resultados de pruebas, cobertura y logs
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.trx
+*.log
+
+# Paquetes y publicacion
+*.nupkg
+*.snupkg
+publish/
+
+# Archivos temporales del sistema
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
+*.swp
