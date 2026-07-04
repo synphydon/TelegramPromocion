@@ -14,11 +14,16 @@ namespace Promocion.Servicios;
 
 public sealed class ServicioConversacion
 {
+    private static readonly TimeSpan EsperaMediaGroup = TimeSpan.FromMilliseconds(750);
     private readonly ITelegramBotClient clienteBot;
     private readonly IDbContextFactory<ContextoTelegram> fabricaContexto;
     private readonly ServicioArchivos servicioArchivos;
     private readonly ServicioPublicador publicador;
     private readonly OpcionesPublicacion opciones;
+    private readonly object sincronizacionMediaGroups = new();
+    private readonly Dictionary<(long ChatId, string MediaGroupId), CancellationTokenSource> confirmacionesMediaGroups = [];
+    private readonly HashSet<(long ChatId, string MediaGroupId)> mediaGroupsConfirmados = [];
+    private readonly Queue<(long ChatId, string MediaGroupId)> historialMediaGroups = [];
 
     public ServicioConversacion(
         ITelegramBotClient clienteBot,
@@ -373,12 +378,95 @@ public sealed class ServicioConversacion
 
         sesion.FechaActualizacion = ServicioFecha.ObtenerAhoraLocal(opciones.ZonaHoraria);
         await contexto.SaveChangesAsync(cancelacion);
+
+        if (mensaje.MediaGroupId is not null)
+        {
+            ProgramarConfirmacionMediaGroup(mensaje.Chat.Id, mensaje.MediaGroupId, cancelacion);
+            return;
+        }
+
         await clienteBot.SendMessage(
             mensaje.Chat.Id,
             "Contenido incorporado correctamente. ¿Desea finalizar el posteo o continuar?",
             replyMarkup: CrearBotonesContenido(),
             cancellationToken: cancelacion);
     }
+
+    private void ProgramarConfirmacionMediaGroup(long chatId, string mediaGroupId, CancellationToken cancelacion)
+    {
+        var clave = (chatId, mediaGroupId);
+        CancellationTokenSource esperaActual = CancellationTokenSource.CreateLinkedTokenSource(cancelacion);
+
+        lock (sincronizacionMediaGroups)
+        {
+            if (mediaGroupsConfirmados.Contains(clave))
+            {
+                esperaActual.Dispose();
+                return;
+            }
+
+            if (confirmacionesMediaGroups.Remove(clave, out CancellationTokenSource? esperaAnterior))
+            {
+                esperaAnterior.Cancel();
+            }
+
+            confirmacionesMediaGroups[clave] = esperaActual;
+        }
+
+        _ = ConfirmarMediaGroupAsync(clave, esperaActual);
+    }
+
+    private async Task ConfirmarMediaGroupAsync(
+        (long ChatId, string MediaGroupId) clave,
+        CancellationTokenSource espera)
+    {
+        try
+        {
+            await Task.Delay(EsperaMediaGroup, espera.Token);
+
+            lock (sincronizacionMediaGroups)
+            {
+                if (!confirmacionesMediaGroups.TryGetValue(clave, out CancellationTokenSource? confirmacion)
+                    || !ReferenceEquals(confirmacion, espera))
+                {
+                    return;
+                }
+
+                confirmacionesMediaGroups.Remove(clave);
+                mediaGroupsConfirmados.Add(clave);
+                historialMediaGroups.Enqueue(clave);
+                if (historialMediaGroups.Count > 1024)
+                {
+                    mediaGroupsConfirmados.Remove(historialMediaGroups.Dequeue());
+                }
+            }
+
+            await EnviarConfirmacionContenidoAsync(clave.ChatId, espera.Token);
+        }
+        catch (OperationCanceledException) when (espera.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            lock (sincronizacionMediaGroups)
+            {
+                if (confirmacionesMediaGroups.TryGetValue(clave, out CancellationTokenSource? confirmacion)
+                    && ReferenceEquals(confirmacion, espera))
+                {
+                    confirmacionesMediaGroups.Remove(clave);
+                }
+            }
+
+            espera.Dispose();
+        }
+    }
+
+    private Task EnviarConfirmacionContenidoAsync(long chatId, CancellationToken cancelacion) =>
+        clienteBot.SendMessage(
+            chatId,
+            "Contenido incorporado correctamente. ¿Desea finalizar el posteo o continuar?",
+            replyMarkup: CrearBotonesContenido(),
+            cancellationToken: cancelacion);
 
     private static void AgregarArchivo(Publicacione publicacion, string tipo, string ruta, string? original, string identificador)
     {
